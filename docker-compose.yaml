@@ -1,0 +1,88 @@
+version: '3'
+
+services:
+  redis:
+    image: redis:latest
+    container_name: redis-lts
+    ports:
+      - "9997:6379"
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 30s
+      retries: 50
+    restart: always
+
+  airflow-server:
+    build:
+      context: ./
+      dockerfile: Dockerfile
+    image: airflow-python3.8:2.3.0
+    container_name: airflow-server
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@172.31.31.35:5435/airflow
+      # For backward compatibility, with Airflow <2.3
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@172.31.31.35:5435/airflow
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@172.31.31.35:5435/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+      AIRFLOW__CORE__FERNET_KEY: ''
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+      _PIP_ADDITIONAL_REQUIREMENTS: ''
+      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_WWW_USER_CREATE: 'true'
+      _AIRFLOW_WWW_USER_USERNAME: airflow
+      _AIRFLOW_WWW_USER_PASSWORD: airflow
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+    user: "${AIRFLOW_UID:-50000}:0"
+    ports:
+      - "9999:8080"
+    command: bash -c "airflow db init; airflow db upgrade; airflow scheduler -D; airflow celery worker -D; airflow triggerer -D; airflow webserver -D;"
+
+#  airflow-init:
+#    build:
+#      context: ./
+#      dockerfile: Dockerfile
+#    container_name: airflow-init
+#    image: airflow-python3.8:2.3.0
+#    entrypoint: /bin/bash
+#    # yamllint disable rule:line-length
+#    command:
+#      - -c
+#      - |
+#        mkdir -p /sources/logs /sources/dags /sources/plugins
+#        chown -R "${AIRFLOW_UID}:0" /sources/{logs,dags,plugins}
+#        exec /entrypoint airflow version
+#    # yamllint enable rule:line-length
+#    environment:
+#      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+#      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+#      # For backward compatibility, with Airflow <2.3
+#      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+#      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
+#      AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+#      AIRFLOW__CORE__FERNET_KEY: ''
+#      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: 'true'
+#      AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+#      AIRFLOW__API__AUTH_BACKENDS: 'airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session'
+#      _PIP_ADDITIONAL_REQUIREMENTS: ''
+#      _AIRFLOW_DB_UPGRADE: 'true'
+#      _AIRFLOW_WWW_USER_CREATE: 'true'
+#      _AIRFLOW_WWW_USER_USERNAME: airflow
+#      _AIRFLOW_WWW_USER_PASSWORD: airflow
+#    user: "0:0"
+#    volumes:
+#      - .:/sources
+#    depends_on:
+#      redis:
+#        condition: service_healthy
+#      postgres:
+#        condition: service_healthy
